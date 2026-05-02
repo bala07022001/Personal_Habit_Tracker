@@ -1,85 +1,109 @@
 # Personal Habit & Reading Tracker
 
-A full-featured personal tracker app built with Streamlit + local SQLite database.
+A **flow-based habit tracker** that evolves with you. Track dynamic, action-oriented habits with real metrics—hours spent, pages read, goals achieved. Your habits aren't fixed; they evolve as you complete them.
+
+## 🎯 Key Concepts
+
+**Action-Based Habits:** Instead of "Gym," track "Spend 1 hour in gym/walking" with actual duration logged.
+
+**Flow Thinking:** Habits are fluid. When you master a mental model habit by February, evolve it—now you're tracking "Read collected mental models" with pages logged.
+
+**Wisdom Wellbeing:** Motivating, energizing actions tracked in real time. Every session matters.
 
 ## Features
-- **Daily Habit Tracking** — Log 13 custom habits, see streaks, 7-day overview grid
-- **Expert Journalling** — Mood, Gratitude, Wins, full reflection entry per day
-- **Reading Stack** — 100+ books with status, review, key lessons, quotes, ratings
-- **Book Detail** — Edit review/notes per book, log reading sessions
-- **Analytics** — Habit heatmap, completion % over time, books by discipline/year
-- **🔍 SQL Query Editor** — Direct database access to CREATE, READ, UPDATE, DELETE data
-- **Dark theme** with clean card UI
+
+- **✅ Daily Actions** — Log habits with values, not just checkboxes
+  - Checkbox (Did you do it?)
+  - Duration (Hours spent)
+  - Quantity (Count/reps)
+  - Pages (For reading)
+- **🔄 Habit Evolution** — Complete a habit → Evolve it into the next version
+- **📊 Action Analytics** — See performance: total hours, pages read, days logged, averages
+- **📓 Daily Journal** — Mood, Gratitude, Wins, Reflections
+- **📚 Reading Stack** — 100+ books, status, ratings, key lessons
+- **🔍 SQL Query Editor** — Direct database access for power users
+- **Dark UI** — Focused, beautiful, distraction-free
 
 ---
 
 ## Local Setup
 
 ```bash
-cd tracker_app
 pip install -r requirements.txt
-
-# Seed your data (run once)
 python seed_data.py
-
-# Launch the app
 streamlit run app.py
 ```
 
-Your app will open at `http://localhost:8501`
-
-**Database location:** `tracker_app/tracker.db` (SQLite file on your computer)
+Data saved to local `tracker.db`
 
 ---
 
-## Using the Query Editor
+## Workflow
 
-Go to **🔍 Query Editor** to run custom SQL directly:
+### 1. Create an Action
+**Settings → ✨ Create**
+- Name: "Deep work session"
+- Type: Duration (hours)
+- Category: Learning
+- Description: "Focused coding/writing"
+- Target: 2 hours/day
 
-**View all habits:**
+### 2. Log Daily
+**Daily Actions → Select date**
+- Log 1.5 hours of deep work
+- Add a note: "Implemented query editor"
+- Save
+
+### 3. Evolve When Ready
+**Settings → 🎯 Active → Enhance**
+
+Complete the habit and create its next version:
+- Old: "Mental models study" (30 pages/week) ✅ Completed
+- New: "Apply mental models" (in projects, duration-based)
+
+The system tracks this transition and archives the old habit.
+
+### 4. Analyze
+**Analytics → 📊 Action Performance**
+- See total hours across 30 days
+- Track progress toward daily targets
+- Review timeline of each action
+
+---
+
+## Action Types
+
+| Type | Unit | Use For |
+|------|------|---------|
+| **checkbox** | — | Binary (done/not done) |
+| **duration** | hours | Time-based: gym, work, meditation |
+| **quantity** | count | Reps/items: exercises, tasks completed |
+| **pages** | pages | Reading: books, articles |
+
+---
+
+## Database
+
+**Tables:**
+- `habits` — Your action definitions + status (active/completed/archived)
+- `habit_log` — Daily values + notes for each action
+- `habit_versions` — Track habit evolution history
+- `journal` — Daily reflections
+- `books` — Your library
+- `reading_log` — Reading sessions
+
+**Query Editor:** Run custom SQL anytime in **🔍 Query Editor**
+
+Example: Get total hours logged this month:
 ```sql
-SELECT * FROM habits WHERE is_active = 1;
-```
-
-**Get today's habit log:**
-```sql
-SELECT h.name, COALESCE(hl.done, 0) as done
+SELECT h.name, SUM(hl.value) as total_hours
 FROM habits h
-LEFT JOIN habit_log hl ON h.id = hl.habit_id AND hl.log_date = date('now')
-WHERE h.is_active = 1;
+JOIN habit_log hl ON h.id = hl.habit_id
+WHERE hl.log_date >= date('now', 'start of month')
+  AND h.action_type = 'duration'
+GROUP BY h.name
+ORDER BY total_hours DESC;
 ```
-
-**Find all completed books:**
-```sql
-SELECT * FROM books WHERE status = 'Completed';
-```
-
-**Add a new habit (INSERT):**
-```sql
-INSERT INTO habits (name, category) VALUES ('Meditation', 'Wellness');
-```
-
-**Update book status (UPDATE):**
-```sql
-UPDATE books SET status = 'Completed' WHERE title = 'Atomic Habits';
-```
-
-**Delete old entries (DELETE):**
-```sql
-DELETE FROM habit_log WHERE log_date < date('now', '-1 year');
-```
-
----
-
-## Database Structure
-
-| Table | Purpose |
-|-------|---------|
-| `habits` | Your habit definitions + active status |
-| `habit_log` | Daily logs (done/missed + notes) |
-| `journal` | Daily journal entries with mood |
-| `books` | Your book library |
-| `reading_log` | Reading sessions (pages read + notes) |
 
 ---
 
@@ -87,25 +111,37 @@ DELETE FROM habit_log WHERE log_date < date('now', '-1 year');
 
 ```
 tracker_app/
-├── app.py                        # Main Streamlit application
-├── database.py                   # SQLite persistence + Query Editor API
-├── seed_data.py                  # One-time data seeder (habits + books)
+├── app.py              # Streamlit UI (Dashboard, Daily Actions, Analytics, etc.)
+├── database.py         # SQLite layer + Query Editor API
+├── seed_data.py        # Seeder for books + initial habits
 ├── requirements.txt
-├── .gitignore
 ├── README.md
+├── .gitignore
 ├── .streamlit/
-│   ├── config.toml               # Theme + server settings
-│   └── secrets.toml              # Empty (local mode)
-└── tracker.db                    # SQLite database (auto-created, your data)
+│   ├── config.toml     # Dark theme config
+│   └── secrets.toml    # (empty for local)
+└── tracker.db          # Your data (auto-created)
 ```
 
 ---
 
-## Customization
+## Tips for Flow
 
-- **Edit dark theme:** Modify colors in `.streamlit/config.toml`
-- **Add more habits:** Use Query Editor or Settings → Add Habit
-- **Backup data:** Copy `tracker.db` to another folder
-- **Export data:** Use Query Editor to SELECT data and download as CSV
+1. **Be specific:** "Gym" → "Strength training - 1 hour"
+2. **Set targets:** Helps measure progress
+3. **Evolve regularly:** Complete → Archive → Create new version
+4. **Connect:** Habit for reading? Log into Reading Stack page too
+5. **Review:** Check Analytics weekly to see patterns
+6. **Journal:** Link daily actions to reflections for deeper insights
+
+---
+
+## Migration from Old Schema
+
+If you had habits with the old checkbox-only system:
+- Old habits remain but won't display in new action-based flow
+- Create new habits with action types via **Settings → ✨ Create**
+- Use **🔍 Query Editor** to migrate old data if needed
+
 
 

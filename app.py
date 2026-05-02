@@ -118,15 +118,15 @@ if page == "🏠 Dashboard":
 
     habit_stats = db.get_habit_stats(30)
     logged_today = db.get_habit_log_for_date(today_str)
-    completed_today = sum(1 for h in logged_today if h["done"] == 1)
-    total_habits = len(habit_stats)
+    completed_today = sum(1 for h in logged_today if h["value"] > 0)
+    total_habits = len(logged_today)
     book_stats = db.get_books_stats()
     journal_today = db.get_journal(today_str)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown(f"""<div class="card card-green">
-            <div class="metric-label">Habits Done Today</div>
+            <div class="metric-label">Actions Logged Today</div>
             <div class="big-metric">{completed_today}/{total_habits}</div>
         </div>""", unsafe_allow_html=True)
     with col2:
@@ -142,7 +142,7 @@ if page == "🏠 Dashboard":
     with col4:
         j_icon = "✅" if journal_today else "❌"
         st.markdown(f"""<div class="card">
-            <div class="metric-label">Journal Today</div>
+            <div class="metric-label">Journaled Today</div>
             <div class="big-metric">{j_icon}</div>
         </div>""", unsafe_allow_html=True)
 
@@ -150,20 +150,32 @@ if page == "🏠 Dashboard":
     col_left, col_right = st.columns([3, 2])
 
     with col_left:
-        st.markdown("### 📈 30-Day Habit Completion")
+        st.markdown("### 📊 30-Day Action Performance")
         if habit_stats:
             names = [h["name"] for h in habit_stats]
-            pcts = [round(100 * (h["done_count"] or 0) / max(h["total_logged"] or 1, 1)) for h in habit_stats]
+            performance = []
+            for h in habit_stats:
+                if h["action_type"] == "checkbox":
+                    # For checkbox: completion rate
+                    perf = round(100 * (h["days_logged"] or 0) / max(30, 1))
+                else:
+                    # For value-based: % of target achieved (if target exists)
+                    if h["target_value"]:
+                        perf = round(100 * (h["total_value"] or 0) / (h["target_value"] * 30))
+                    else:
+                        perf = 100 if h["days_logged"] > 0 else 0
+                performance.append(min(100, perf))
+            
             fig = go.Figure(go.Bar(
-                x=pcts, y=names, orientation="h",
-                marker=dict(color=pcts, colorscale=[[0,"#b71c1c"],[0.5,"#ff9800"],[1,"#4caf50"]], showscale=False),
-                text=[f"{p}%" for p in pcts], textposition="outside"
+                x=performance, y=names, orientation="h",
+                marker=dict(color=performance, colorscale=[[0,"#b71c1c"],[0.5,"#ff9800"],[1,"#4caf50"]], showscale=False),
+                text=[f"{p}%" for p in performance], textposition="outside"
             ))
             dark_layout(fig, 380)
             fig.update_layout(xaxis=dict(range=[0, 115], showgrid=False))
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Log some habits to see stats.")
+            st.info("📝 Create habits in Settings to see performance.")
 
     with col_right:
         st.markdown("### 📚 Library Status")
@@ -176,7 +188,7 @@ if page == "🏠 Dashboard":
             textfont_size=12,
         ))
         dark_layout(fig2, 280)
-        st.plotly_chart(fig2, width='stretch')
+        st.plotly_chart(fig2, use_container_width=True)
 
         st.markdown("### 📓 Recent Journal")
         history = db.get_journal_history(5)
@@ -210,81 +222,149 @@ if page == "🏠 Dashboard":
 # PAGE: DAILY HABITS
 # ─────────────────────────────────────────────────────────────────────────────
 elif page == "✅ Daily Habits":
-    st.markdown("## ✅ Daily Habits")
-
+    st.markdown("## ✅ Daily Actions")
+    
     sel_date = st.date_input("Date", value=date.today(), max_value=date.today())
     sel_date_str = str(sel_date)
 
-    habits = db.get_habits()
+    habits = db.get_habits("active")
     if not habits:
-        st.warning("No habits found. Add habits in ⚙️ Settings.")
+        st.warning("No active habits. Create one in ⚙️ Settings.")
         st.stop()
 
     existing = db.get_habit_log_for_date(sel_date_str)
     existing_map = {h["id"]: h for h in existing}
 
     st.markdown("---")
-    st.markdown(f"### Log for **{sel_date.strftime('%A, %B %d %Y')}**")
-
+    st.markdown(f"### 📋 Log for **{sel_date.strftime('%A, %B %d %Y')}**")
+    
+    # Group by category
     categories = {}
     for h in habits:
         categories.setdefault(h["category"], []).append(h)
 
     log_data = {}
+    
     for cat, cat_habits in categories.items():
-        st.markdown(f"#### 🏷️ {cat}")
-        for h in cat_habits:
-            existing_h = existing_map.get(h["id"], {})
-            streak = db.get_habit_streak(h["id"])
-            cols = st.columns([0.05, 3, 4, 1])
-            with cols[0]:
-                done = st.checkbox("", value=bool(existing_h.get("done", 0)), key=f"done_{h['id']}_{sel_date_str}")
-            with cols[1]:
-                st.markdown(f"**{h['name']}**")
-                if streak > 0:
-                    st.markdown(f"<span class='streak'>🔥 {streak}d streak</span>", unsafe_allow_html=True)
-            with cols[2]:
-                note = st.text_input("Note", value=existing_h.get("note", ""),
-                                     key=f"note_{h['id']}_{sel_date_str}",
-                                     label_visibility="collapsed", placeholder="Quick note...")
-            with cols[3]:
-                if done:
-                    st.markdown("<span class='done-pill'>✓ Done</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<span class='miss-pill'>✗ Miss</span>", unsafe_allow_html=True)
-            log_data[h["id"]] = (done, note)
+        with st.expander(f"**🏷️ {cat}**", expanded=True):
+            for h in cat_habits:
+                existing_h = existing_map.get(h["id"], {})
+                current_value = existing_h.get("value", 0)
+                
+                # Display habit with description
+                col_title, col_target = st.columns([3, 1])
+                with col_title:
+                    st.markdown(f"#### {h['name']}")
+                    if h['description']:
+                        st.caption(f"💬 {h['description']}")
+                
+                with col_target:
+                    if h['target_value']:
+                        st.metric("Target", f"{h['target_value']} {h['unit'] or ''}")
+                
+                # Input based on action_type
+                col1, col2, col3 = st.columns([2, 2, 1])
+                
+                if h['action_type'] == 'checkbox':
+                    with col1:
+                        done = st.checkbox(
+                            "Completed",
+                            value=bool(current_value),
+                            key=f"done_{h['id']}_{sel_date_str}"
+                        )
+                        log_data[h["id"]] = (1.0 if done else 0.0, "")
+                    with col2:
+                        st.empty()
+                    with col3:
+                        if current_value > 0:
+                            st.markdown("✅")
+                        else:
+                            st.markdown("⭕")
+                
+                elif h['action_type'] == 'duration':
+                    with col1:
+                        hours = st.number_input(
+                            "Hours",
+                            min_value=0.0,
+                            max_value=24.0,
+                            step=0.25,
+                            value=float(current_value),
+                            key=f"hours_{h['id']}_{sel_date_str}"
+                        )
+                    with col2:
+                        note = st.text_input(
+                            "Note",
+                            value=existing_h.get("note", ""),
+                            key=f"note_{h['id']}_{sel_date_str}",
+                            placeholder="What did you do?"
+                        )
+                    with col3:
+                        if hours > 0:
+                            pct = min(100, int((hours / (h['target_value'] or 1)) * 100))
+                            st.metric("Progress", f"{pct}%")
+                    log_data[h["id"]] = (hours, note)
+                
+                elif h['action_type'] == 'pages':
+                    with col1:
+                        pages = st.number_input(
+                            "Pages read",
+                            min_value=0,
+                            step=1,
+                            value=int(current_value),
+                            key=f"pages_{h['id']}_{sel_date_str}"
+                        )
+                    with col2:
+                        book = st.text_input(
+                            "Book",
+                            value=existing_h.get("note", ""),
+                            key=f"book_{h['id']}_{sel_date_str}",
+                            placeholder="Which book?"
+                        )
+                    with col3:
+                        if pages > 0:
+                            st.metric("Pages", pages)
+                    log_data[h["id"]] = (float(pages), book)
+                
+                else:  # quantity
+                    with col1:
+                        qty = st.number_input(
+                            h['unit'] or "Quantity",
+                            min_value=0.0,
+                            step=1.0,
+                            value=float(current_value),
+                            key=f"qty_{h['id']}_{sel_date_str}"
+                        )
+                    with col2:
+                        note = st.text_input(
+                            "Note",
+                            value=existing_h.get("note", ""),
+                            key=f"note_qty_{h['id']}_{sel_date_str}",
+                            placeholder="Details..."
+                        )
+                    with col3:
+                        if h['target_value'] and qty > 0:
+                            pct = min(100, int((qty / h['target_value']) * 100))
+                            st.metric("Progress", f"{pct}%")
+                    log_data[h["id"]] = (qty, note)
+                
+                st.divider()
+    
+    # Save button
+    col_save, col_summary = st.columns([1, 3])
+    with col_save:
+        if st.button("💾 Save Log", type="primary", use_container_width=True):
+            for habit_id, (value, note) in log_data.items():
+                db.log_habit(habit_id, sel_date_str, value, note)
+            st.success("✅ Logged! Keep flowing...")
+            st.rerun()
+    
+    with col_summary:
+        completed = sum(1 for v, _ in log_data.values() if v > 0)
+        st.info(f"📊 {completed}/{len(habits)} actions logged today")
 
-    if st.button("💾 Save Habit Log", type="primary"):
-        db.log_habits(sel_date_str, log_data)
-        done_count = sum(1 for d, _ in log_data.values() if d)
-        st.success(f"Saved! {done_count}/{len(habits)} habits completed.")
-        st.rerun()
 
-    # ── Last 7 Days Overview (HTML table — no pyarrow) ────────────────────────
-    st.markdown("---")
-    st.markdown("### 📅 Last 7 Days Overview")
-    dates_7 = [str(date.today() - timedelta(days=i)) for i in range(6, -1, -1)]
-    head_html = "<th>Habit</th>" + "".join(f"<th>{d[-5:]}</th>" for d in dates_7)
-    rows_html = ""
-    for h in habits:
-        cells = f"<td><b>{h['name']}</b></td>"
-        for d in dates_7:
-            logs = db.get_habit_log_for_date(d)
-            m = {x["id"]: x for x in logs}
-            val = m.get(h["id"], {})
-            if val.get("done"):
-                cell = "<td style='text-align:center;font-size:1.1rem'>✅</td>"
-            elif "id" in val:
-                cell = "<td style='text-align:center;font-size:1.1rem'>❌</td>"
-            else:
-                cell = "<td style='text-align:center;color:#555'>—</td>"
-            cells += cell
-        rows_html += f"<tr>{cells}</tr>"
-    st.markdown(
-        f"<table class='htable'><thead><tr>{head_html}</tr></thead><tbody>{rows_html}</tbody></table>",
-        unsafe_allow_html=True
-    )
-
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE: JOURNAL
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: JOURNAL
@@ -567,57 +647,69 @@ elif page == "📊 Analytics":
 
     # ── HABIT ANALYTICS ───────────────────────────────────────────────────────
     with tab_h:
-        habits = db.get_habits()
+        habits = db.get_habits("active")
         if not habits:
-            st.info("No habits yet.")
+            st.info("📝 Create habits in Settings to see analytics.")
         else:
-            # Row 1: Heatmap + Category Breakdown
-            col_heat, col_cat = st.columns([3, 2])
+            st.markdown("### 📊 Action Performance (30 days)")
+            habit_stats_all = db.get_habit_stats(30)
+            
+            # Summary cards
+            cols = st.columns(len(habit_stats_all))
+            for i, h in enumerate(habit_stats_all):
+                with cols[i % len(cols)]:
+                    if h["action_type"] == "checkbox":
+                        val = f"{h['days_logged']}/30"
+                        label = "Days"
+                    else:
+                        val = f"{h['total_value']:.1f}" if h['total_value'] else "0"
+                        label = h['unit'] or "Total"
+                    st.metric(h['name'][:12], val, label=label)
+            
+            st.divider()
+            
+            # Detailed table
+            st.markdown("### 📋 Detailed Breakdown")
+            table_data = []
+            for h in habit_stats_all:
+                table_data.append({
+                    "Action": h["name"],
+                    "Type": h["action_type"],
+                    "Days Logged": h["days_logged"] or 0,
+                    "Total": f"{h['total_value']:.2f}" if h['total_value'] else "0",
+                    "Average": f"{h['avg_value']:.2f}" if h['avg_value'] else "0",
+                    "Last Logged": h["last_logged"] or "—"
+                })
+            df_habits = pd.DataFrame(table_data)
+            st.dataframe(df_habits, use_container_width=True, hide_index=True)
+            
+            # Individual habit timeline
+            st.markdown("---")
+            st.markdown("### 📈 Action Timeline")
+            chosen = st.selectbox(
+                "Select action",
+                options=[h["id"] for h in habit_stats_all],
+                format_func=lambda hid: next((h["name"] for h in habit_stats_all if h["id"] == hid), "Unknown")
+            )
+            
+            timeline = db.get_habit_timeline(chosen, 60)
+            if timeline:
+                df_timeline = pd.DataFrame(timeline)
+                fig_timeline = go.Figure()
+                fig_timeline.add_trace(go.Scatter(
+                    x=df_timeline["log_date"],
+                    y=df_timeline["value"],
+                    mode="lines+markers",
+                    line=dict(color="#7c6fcd", width=2),
+                    marker=dict(size=6),
+                    fill="tozeroy",
+                    fillcolor="rgba(124,111,205,0.15)"
+                ))
+                dark_layout(fig_timeline, 300)
+                st.plotly_chart(fig_timeline, use_container_width=True)
+            else:
+                st.info("No data yet for this action.")
 
-            with col_heat:
-                st.markdown("### 🗓️ Habit Heatmap")
-                chosen_habit = st.selectbox("Habit", [h["name"] for h in habits])
-                chosen_id = next(h["id"] for h in habits if h["name"] == chosen_habit)
-                year_sel = st.number_input("Year", min_value=2024, max_value=2030,
-                                           value=date.today().year, key="heatmap_year")
-                heatmap_data = db.get_habit_heatmap(chosen_id, year_sel)
-
-                all_days = []
-                for m in range(1, 13):
-                    for d in range(1, calendar.monthrange(year_sel, m)[1] + 1):
-                        day_str = f"{year_sel}-{m:02d}-{d:02d}"
-                        all_days.append({
-                            "date": day_str,
-                            "done": heatmap_data.get(day_str, -1),
-                            "weekday": date(year_sel, m, d).weekday()
-                        })
-                df_heat = pd.DataFrame(all_days)
-                df_heat["week"] = pd.to_datetime(df_heat["date"]).dt.isocalendar().week.astype(int)
-                color_map = {1: "#4caf50", 0: "#b71c1c", -1: "#2d3150"}
-                fig_heat = go.Figure()
-                for _, row in df_heat.iterrows():
-                    fig_heat.add_trace(go.Scatter(
-                        x=[row["week"]], y=[row["weekday"]], mode="markers",
-                        marker=dict(color=color_map.get(row["done"], "#2d3150"), size=10, symbol="square"),
-                        showlegend=False,
-                        hovertext=f"{row['date']} {'✅' if row['done']==1 else ('❌' if row['done']==0 else '—')}",
-                        hoverinfo="text"
-                    ))
-                fig_heat.update_layout(
-                    paper_bgcolor="#0f1117", plot_bgcolor="#0f1117",
-                    font=dict(color="#e0e0e0"), height=200,
-                    yaxis=dict(tickvals=list(range(7)),
-                               ticktext=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], showgrid=False),
-                    xaxis=dict(showgrid=False, title="Week of Year"),
-                    margin=dict(l=50, r=10, t=10, b=30)
-                )
-                st.plotly_chart(fig_heat, width='stretch')
-                st.caption("🟩 Done  🟥 Missed  ◻️ Not logged")
-
-            with col_cat:
-                st.markdown("### 🏷️ Completion by Category (30d)")
-                habit_stats_all = db.get_habit_stats(30)
-                cat_map = {h["name"]: h["category"] for h in habits}
                 cat_done, cat_total = {}, {}
                 for hs in habit_stats_all:
                     cat = cat_map.get(hs["name"], "Other")
@@ -946,48 +1038,198 @@ DELETE FROM books WHERE id = 5;
 # PAGE: SETTINGS
 # ─────────────────────────────────────────────────────────────────────────────
 elif page == "⚙️ Settings":
-    st.markdown("## ⚙️ Settings")
+    st.markdown("## ⚙️ Habit Studio")
+    st.markdown("*Design & evolve your action-based habits*")
 
-    st.markdown("### 🏷️ Manage Habits")
-    tab_view, tab_add = st.tabs(["View / Toggle", "Add Habit"])
+    tab_active, tab_create, tab_evolve, tab_history = st.tabs(["🎯 Active", "✨ Create", "🔄 Evolve", "📜 History"])
 
-    with tab_view:
-        all_habits = db.get_habits(active_only=False)
-        for h in all_habits:
-            c1, c2 = st.columns([4, 1])
-            c1.markdown(f"**{h['name']}** `{h['category']}`")
-            active = bool(h["is_active"])
-            toggle = c2.checkbox("Active", value=active, key=f"active_{h['id']}")
-            if toggle != active:
-                db.toggle_habit_active(h["id"], toggle)
-                st.rerun()
+    # ── ACTIVE HABITS ─────────────────────────────────────────────────────────
+    with tab_active:
+        st.markdown("### Your Active Actions")
+        active_habits = db.get_habits("active")
+        
+        if not active_habits:
+            st.info("No active habits. Create one in the ✨ Create tab.")
+        else:
+            for h in active_habits:
+                with st.expander(f"**{h['name']}** — {h['category']}", expanded=False):
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("**Details:**")
+                        st.markdown(f"- **Category:** {h['category']}")
+                        st.markdown(f"- **Type:** {h['action_type']}")
+                        if h['unit']:
+                            st.markdown(f"- **Unit:** {h['unit']}")
+                        if h['target_value']:
+                            st.markdown(f"- **Target:** {h['target_value']} {h['unit'] or ''}")
+                        st.markdown(f"- **Started:** {h['created_at']}")
+                    
+                    with col2:
+                        st.markdown("**Progress (30d):**")
+                        progress = db.get_habit_progress(h["id"], 30)
+                        if progress:
+                            st.metric("Days logged", progress['days_logged'])
+                            if progress['total_value'] > 0:
+                                st.metric("Total", f"{progress['total_value']:.1f} {h['unit'] or ''}")
+                            st.metric("Average", f"{progress['avg_value']:.2f} {h['unit'] or ''}")
+                    
+                    if h['description']:
+                        st.markdown(f"**Description:** {h['description']}")
+                    
+                    st.divider()
+                    
+                    col_enhance, col_archive = st.columns(2)
+                    with col_enhance:
+                        if st.button(f"🔄 Enhance '{h['name']}'", key=f"enhance_{h['id']}"):
+                            st.session_state[f"enhance_habit_{h['id']}"] = True
+                    with col_archive:
+                        if st.button(f"📦 Archive '{h['name']}'", key=f"archive_{h['id']}"):
+                            db.archive_habit(h["id"])
+                            st.success(f"Archived! '{h['name']}' moved to history.")
+                            st.rerun()
+                    
+                    # Enhance form (hidden by default)
+                    if st.session_state.get(f"enhance_habit_{h['id']}"):
+                        st.markdown("---")
+                        st.markdown("### 🔄 Enhance This Habit")
+                        with st.form(f"enhance_form_{h['id']}"):
+                            st.markdown("*Your habit is evolving! Create the next version.*")
+                            new_name = st.text_input("New action name", value=h['name'])
+                            new_desc = st.text_area("What will you focus on next?", value=h['description'] or "")
+                            new_action = st.selectbox(
+                                "Action type",
+                                ["checkbox", "duration", "quantity", "pages"],
+                                index=["checkbox", "duration", "quantity", "pages"].index(h['action_type'])
+                            )
+                            new_unit = st.text_input("Unit", value=h['unit'] or "", help="e.g., hours, pages, count")
+                            new_target = st.number_input("Target value", value=float(h['target_value'] or 0), step=0.5)
+                            
+                            if st.form_submit_button("✨ Create Enhanced Version", type="primary"):
+                                new_id = db.enhance_habit(
+                                    h["id"], new_name, new_desc, h['category'],
+                                    new_action, new_unit, new_target
+                                )
+                                st.success(f"✅ Enhanced! Started tracking '{new_name}'")
+                                st.session_state.pop(f"enhance_habit_{h['id']}", None)
+                                st.rerun()
 
-    with tab_add:
-        with st.form("add_habit_form"):
-            h_name = st.text_input("Habit Name")
-            h_cat = st.text_input("Category", value="General")
-            add_sub = st.form_submit_button("Add Habit", type="primary")
-            if add_sub:
-                if h_name.strip():
-                    db.add_habit(h_name.strip(), h_cat.strip())
-                    st.success(f"Habit '{h_name}' added!")
+    # ── CREATE NEW HABIT ──────────────────────────────────────────────────────
+    with tab_create:
+        st.markdown("### ✨ Create New Action")
+        st.markdown("*Define your next habit or action to track*")
+        
+        with st.form("create_habit_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("Action name *", placeholder="e.g., Deep work, Reading, Meditation")
+                category = st.text_input("Category", value="General", placeholder="e.g., Wellness, Learning")
+            
+            with col2:
+                action_type = st.selectbox(
+                    "Action type *",
+                    ["checkbox", "duration", "quantity", "pages"],
+                    help="checkbox=Yes/No | duration=Hours | quantity=Count | pages=Pages read"
+                )
+            
+            description = st.text_area(
+                "Description",
+                placeholder="Why this habit? What's your intention?",
+                height=80
+            )
+            
+            col3, col4 = st.columns(2)
+            with col3:
+                unit = st.text_input("Unit", placeholder="e.g., hours, count, pages (optional)")
+            with col4:
+                target = st.number_input("Daily target (optional)", value=0.0, step=0.5)
+            
+            submitted = st.form_submit_button("✨ Create Habit", type="primary")
+            if submitted:
+                if name.strip():
+                    db.create_habit(
+                        name.strip(), category, description,
+                        action_type, unit if unit else None,
+                        target if target > 0 else None
+                    )
+                    st.success(f"🎯 '{name}' created! Start logging it in Daily Actions.")
                     st.rerun()
                 else:
-                    st.error("Name required.")
+                    st.error("Action name is required.")
 
+    # ── EVOLVE HABITS ─────────────────────────────────────────────────────────
+    with tab_evolve:
+        st.markdown("### 🔄 Habit Evolution")
+        st.markdown("*Complete a habit and evolve it into something new*")
+        
+        active = db.get_habits("active")
+        if active:
+            selected = st.selectbox(
+                "Select habit to evolve",
+                options=[h["id"] for h in active],
+                format_func=lambda hid: next((h["name"] for h in active if h["id"] == hid), "Unknown")
+            )
+            
+            h = next((x for x in active if x["id"] == selected), None)
+            if h:
+                st.info(f"📍 Evolving: **{h['name']}** from {h['created_at']}")
+                
+                with st.form(f"evolve_form_{selected}"):
+                    st.markdown("**Next version:**")
+                    new_name = st.text_input("New action name")
+                    new_desc = st.text_area("New focus")
+                    new_action = st.selectbox("Action type", ["checkbox", "duration", "quantity", "pages"])
+                    new_unit = st.text_input("Unit")
+                    new_target = st.number_input("Target value", step=0.5)
+                    
+                    if st.form_submit_button("🔄 Complete & Evolve", type="primary"):
+                        if new_name.strip():
+                            new_id = db.enhance_habit(
+                                selected, new_name, new_desc, h['category'],
+                                new_action, new_unit, new_target
+                            )
+                            st.success(f"✅ Evolved! Now tracking '{new_name}'")
+                            st.rerun()
+                        else:
+                            st.error("New action name required.")
+
+    # ── HISTORY ──────────────────────────────────────────────────────────────
+    with tab_history:
+        st.markdown("### 📜 Completed & Archived")
+        
+        col_completed, col_archived = st.columns(2)
+        
+        with col_completed:
+            st.markdown("**✅ Completed**")
+            completed = db.get_habits("completed")
+            if completed:
+                for h in completed:
+                    st.markdown(f"- **{h['name']}** ({h['category']}) — {h['completed_at']}")
+            else:
+                st.info("No completed habits yet.")
+        
+        with col_archived:
+            st.markdown("**📦 Archived**")
+            archived = db.get_habits("archived")
+            if archived:
+                for h in archived:
+                    st.markdown(f"- **{h['name']}** ({h['category']}) — {h['archived_at']}")
+            else:
+                st.info("No archived habits yet.")
+    
     st.markdown("---")
     st.markdown("### 🧹 Database Maintenance")
     col_a, col_b = st.columns(2)
     with col_a:
-        st.markdown("**Remove duplicate books** (keeps oldest entry per title):")
+        st.markdown("**Remove duplicate books:**")
         if st.button("🔁 Deduplicate Books"):
             removed = db.deduplicate_books()
             if removed:
-                st.success(f"Removed {removed} duplicate(s). Refresh to see changes.")
+                st.success(f"Removed {removed} duplicate(s).")
             else:
                 st.info("No duplicates found.")
     with col_b:
         st.markdown("**Database stats:**")
         book_stats = db.get_books_stats()
         st.json(book_stats)
-    st.code(f"DB path: {db.DB_PATH}", language="text")
+    st.code(f"DB: {db.DB_PATH}", language="text")

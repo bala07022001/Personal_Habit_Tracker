@@ -10,25 +10,26 @@ db.init_db()
 
 # ── HABITS ────────────────────────────────────────────────────────────────────
 HABITS = [
-    ("Black Coffee",                                    "Morning Ritual"),
-    ("Left Hand Writing",                               "Brain Training"),
-    ("Left Hand Mirror Writing",                        "Brain Training"),
-    ("Duolingo",                                        "Learning"),
-    ("Mental Model Chapter / Proof-Reading / Diagrams", "Learning"),
-    ("Read Book for Project Holistic",                  "Learning"),
-    ("Wisdom Wellbeing",                                "Wellbeing"),
-    ("Finance Vital-Check",                             "Finance"),
-    ("Clean Eating",                                    "Health"),
-    ("Gym",                                             "Health"),
-    ("Cook Lunch",                                      "Health"),
-    ("Walking",                                         "Health"),
-    ("Journal",                                         "Reflection"),
+    # (name, category, description, action_type, unit, target_value)
+    ("Black Coffee", "Morning Ritual", "Morning ritual with black coffee", "checkbox", None, None),
+    ("Left Hand Writing", "Brain Training", "Practice writing with left hand", "quantity", "pages", 2),
+    ("Left Hand Mirror Writing", "Brain Training", "Practice mirror writing with left hand", "quantity", "pages", 2),
+    ("Duolingo", "Learning", "Language learning app", "quantity", "lessons", 1),
+    ("Mental Models Study", "Learning", "Study & proof-read mental models", "pages", "pages", 20),
+    ("Read from Project Holistic", "Learning", "Reading pages from project books", "pages", "pages", 50),
+    ("Wisdom Wellbeing", "Wellbeing", "Ideation for motivating/energizing ideas", "quantity", "ideas", 3),
+    ("Finance Vital-Check", "Finance", "Review financial health metrics", "checkbox", None, None),
+    ("Clean Eating", "Health", "Eat healthy, unprocessed foods", "checkbox", None, None),
+    ("Gym", "Health", "Strength training or gym workout", "duration", "hours", 1.0),
+    ("Cook Lunch", "Health", "Cook nutritious lunch", "checkbox", None, None),
+    ("Walking", "Health", "Take a walk or active movement", "duration", "hours", 0.5),
+    ("Daily Journal", "Reflection", "Reflect and journal each day", "duration", "minutes", 15),
 ]
 
 print("Seeding habits...")
-for name, cat in HABITS:
-    db.add_habit(name, cat)
-    print(f"  + {name}")
+for name, cat, desc, action_type, unit, target in HABITS:
+    db.create_habit(name, cat, desc, action_type, unit, target)
+    print(f"  + {name} ({action_type})")
 
 # ── COMPLETED BOOKS ───────────────────────────────────────────────────────────
 COMPLETED_BOOKS = [

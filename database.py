@@ -22,28 +22,41 @@ def init_db():
     with get_conn() as conn:
         conn.executescript("""
         CREATE TABLE IF NOT EXISTS habits (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT NOT NULL UNIQUE,
-            category    TEXT DEFAULT 'General',
-            is_active   INTEGER DEFAULT 1,
-            created_at  DATE DEFAULT (date('now'))
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            description     TEXT,
+            category        TEXT DEFAULT 'General',
+            action_type     TEXT DEFAULT 'checkbox',
+            unit            TEXT,
+            target_value    REAL,
+            status          TEXT DEFAULT 'active',
+            created_at      DATE DEFAULT (date('now')),
+            completed_at    DATE,
+            archived_at     DATE
         );
         CREATE TABLE IF NOT EXISTS habit_log (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            habit_id   INTEGER NOT NULL REFERENCES habits(id),
-            log_date   DATE NOT NULL,
-            done       INTEGER DEFAULT 0,
-            note       TEXT,
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            habit_id        INTEGER NOT NULL REFERENCES habits(id),
+            log_date        DATE NOT NULL,
+            value           REAL,
+            note            TEXT,
             UNIQUE(habit_id, log_date)
         );
+        CREATE TABLE IF NOT EXISTS habit_versions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_habit_id INTEGER NOT NULL REFERENCES habits(id),
+            new_habit_id    INTEGER REFERENCES habits(id),
+            transition_date DATE DEFAULT (date('now')),
+            reason          TEXT
+        );
         CREATE TABLE IF NOT EXISTS journal (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_date DATE NOT NULL UNIQUE,
-            content    TEXT,
-            mood       TEXT,
-            gratitude  TEXT,
-            wins       TEXT,
-            created_at TIMESTAMP DEFAULT (datetime('now'))
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_date      DATE NOT NULL UNIQUE,
+            content         TEXT,
+            mood            TEXT,
+            gratitude       TEXT,
+            wins            TEXT,
+            created_at      TIMESTAMP DEFAULT (datetime('now'))
         );
         CREATE TABLE IF NOT EXISTS books (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,127 +76,176 @@ def init_db():
             added_at        DATE DEFAULT (date('now'))
         );
         CREATE TABLE IF NOT EXISTS reading_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            book_id     INTEGER NOT NULL REFERENCES books(id),
-            log_date    DATE NOT NULL,
-            pages_read  INTEGER DEFAULT 0,
-            notes       TEXT,
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id         INTEGER NOT NULL REFERENCES books(id),
+            log_date        DATE NOT NULL,
+            pages_read      INTEGER DEFAULT 0,
+            notes           TEXT,
             UNIQUE(book_id, log_date)
         );
         """)
 
 
 
+
 # ── HABITS ────────────────────────────────────────────────────────────────────
 
-def get_habits(active_only=True):
+def create_habit(name: str, category: str = "General", description: str = "", 
+                 action_type: str = "checkbox", unit: str = None, target_value: float = None):
+    """Create a new habit with action-based tracking."""
     with get_conn() as conn:
-        q = "SELECT * FROM habits"
-        if active_only:
-            q += " WHERE is_active = 1"
-        q += " ORDER BY id"
-        return [dict(r) for r in conn.execute(q).fetchall()]
+        conn.execute("""
+            INSERT INTO habits(name, category, description, action_type, unit, target_value, status)
+            VALUES(?, ?, ?, ?, ?, ?, 'active')
+        """, (name, category, description, action_type, unit, target_value))
 
 
-def add_habit(name: str, category: str = "General"):
+def get_habits(status: str = "active"):
+    """Get habits by status: 'active', 'completed', 'archived', or 'all'."""
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO habits(name, category) VALUES (?, ?)", (name, category))
+        if status == "all":
+            q = "SELECT * FROM habits ORDER BY status, created_at DESC"
+            rows = conn.execute(q).fetchall()
+        else:
+            q = "SELECT * FROM habits WHERE status = ? ORDER BY created_at DESC"
+            rows = conn.execute(q, (status,)).fetchall()
+        return [dict(r) for r in rows]
 
 
-def toggle_habit_active(habit_id: int, active: bool):
+def get_habit(habit_id: int):
+    """Get a single habit."""
     with get_conn() as conn:
-        conn.execute("UPDATE habits SET is_active=? WHERE id=?", (int(active), habit_id))
+        r = conn.execute("SELECT * FROM habits WHERE id=?", (habit_id,)).fetchone()
+        return dict(r) if r else None
 
 
-def log_habits(date_str: str, logs: dict):
-    """logs: {habit_id: (done: bool, note: str)}"""
+def update_habit(habit_id: int, **fields):
+    """Update habit fields."""
+    if not fields:
+        return
+    sets = ", ".join(f"{k}=?" for k in fields)
+    vals = list(fields.values()) + [habit_id]
     with get_conn() as conn:
-        for habit_id, (done, note) in logs.items():
-            conn.execute("""
-                INSERT INTO habit_log(habit_id, log_date, done, note)
-                VALUES(?, ?, ?, ?)
-                ON CONFLICT(habit_id, log_date) DO UPDATE SET done=excluded.done, note=excluded.note
-            """, (habit_id, date_str, int(done), note))
+        conn.execute(f"UPDATE habits SET {sets} WHERE id=?", vals)
+
+
+def complete_habit(habit_id: int):
+    """Mark habit as completed."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE habits SET status='completed', completed_at=date('now') WHERE id=?",
+            (habit_id,)
+        )
+
+
+def enhance_habit(old_habit_id: int, new_name: str, new_description: str, 
+                  category: str, action_type: str, unit: str = None, target_value: float = None):
+    """Complete old habit and create an evolved version."""
+    with get_conn() as conn:
+        # Create new habit
+        conn.execute("""
+            INSERT INTO habits(name, category, description, action_type, unit, target_value, status)
+            VALUES(?, ?, ?, ?, ?, ?, 'active')
+        """, (new_name, category, new_description, action_type, unit, target_value))
+        
+        # Get the new habit ID
+        new_habit_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        
+        # Record the transition
+        conn.execute("""
+            INSERT INTO habit_versions(original_habit_id, new_habit_id, reason)
+            VALUES(?, ?, 'evolved')
+        """, (old_habit_id, new_habit_id))
+        
+        # Archive old habit
+        conn.execute(
+            "UPDATE habits SET status='completed', completed_at=date('now') WHERE id=?",
+            (old_habit_id,)
+        )
+        
+        return new_habit_id
+
+
+def archive_habit(habit_id: int):
+    """Archive a habit without completing it."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE habits SET status='archived', archived_at=date('now') WHERE id=?",
+            (habit_id,)
+        )
+
+
+def log_habit(habit_id: int, date_str: str, value: float = 1.0, note: str = ""):
+    """Log a habit action with value (for checkbox: 1.0, for quantity/duration: actual value)."""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO habit_log(habit_id, log_date, value, note)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(habit_id, log_date) DO UPDATE SET value=excluded.value, note=excluded.note
+        """, (habit_id, date_str, value, note))
 
 
 def get_habit_log_for_date(date_str: str):
+    """Get all active habit logs for a date."""
     with get_conn() as conn:
         rows = conn.execute("""
-            SELECT h.id, h.name, h.category,
-                   COALESCE(hl.done, 0) as done, COALESCE(hl.note, '') as note
+            SELECT h.id, h.name, h.category, h.action_type, h.unit, h.target_value,
+                   COALESCE(hl.value, 0) as value, COALESCE(hl.note, '') as note
             FROM habits h
             LEFT JOIN habit_log hl ON hl.habit_id = h.id AND hl.log_date = ?
-            WHERE h.is_active = 1
-            ORDER BY h.id
+            WHERE h.status = 'active'
+            ORDER BY h.created_at DESC
         """, (date_str,)).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_habit_streak(habit_id: int):
-    """Returns current streak (consecutive days done up to today)."""
+def get_habit_progress(habit_id: int, days: int = 30):
+    """Get habit progress over last N days."""
     with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT log_date, done FROM habit_log
-            WHERE habit_id = ? ORDER BY log_date DESC
-        """, (habit_id,)).fetchall()
-    streak = 0
-    for r in rows:
-        if r["done"] == 1:
-            streak += 1
-        else:
-            break
-    return streak
+        rows = conn.execute(f"""
+            SELECT 
+                h.id, h.name, h.unit, h.target_value,
+                COUNT(hl.id) as days_logged,
+                SUM(hl.value) as total_value,
+                AVG(hl.value) as avg_value,
+                MAX(hl.log_date) as last_logged
+            FROM habits h
+            LEFT JOIN habit_log hl ON hl.habit_id = h.id 
+                AND hl.log_date >= date('now', '-{days} days')
+            WHERE h.id = ?
+            GROUP BY h.id
+        """, (habit_id,)).fetchone()
+        return dict(rows) if rows else None
 
 
 def get_habit_stats(days: int = 30):
-    """Returns per-habit completion % for last N days."""
+    """Get stats for all active habits over last N days."""
     with get_conn() as conn:
         rows = conn.execute(f"""
-            SELECT h.name, h.id,
-                   SUM(hl.done) as done_count,
-                   COUNT(hl.id) as total_logged,
-                   MAX(hl.log_date) as last_logged
+            SELECT 
+                h.id, h.name, h.action_type, h.unit, h.target_value,
+                COUNT(hl.id) as days_logged,
+                SUM(hl.value) as total_value,
+                AVG(hl.value) as avg_value,
+                MAX(hl.log_date) as last_logged
             FROM habits h
-            LEFT JOIN habit_log hl ON hl.habit_id = h.id
+            LEFT JOIN habit_log hl ON hl.habit_id = h.id 
                 AND hl.log_date >= date('now', '-{days} days')
-            WHERE h.is_active = 1
+            WHERE h.status = 'active'
             GROUP BY h.id
-            ORDER BY h.id
+            ORDER BY h.created_at DESC
         """).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_habit_heatmap(habit_id: int, year: int):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT log_date, done FROM habit_log
-            WHERE habit_id = ? AND strftime('%Y', log_date) = ?
-            ORDER BY log_date
-        """, (habit_id, str(year))).fetchall()
-        return {r["log_date"]: r["done"] for r in rows}
-
-
-def get_daily_completion_trend(days: int = 60):
-    """Returns [{log_date, pct}] for the last N days — used by Analytics page."""
+def get_habit_timeline(habit_id: int, days: int = 60):
+    """Get daily values for a habit over N days."""
     with get_conn() as conn:
         rows = conn.execute(f"""
-            SELECT log_date,
-                   ROUND(100.0 * SUM(done) / COUNT(*), 1) as pct
-            FROM habit_log
-            WHERE log_date >= date('now', '-{days} days')
-            GROUP BY log_date ORDER BY log_date
-        """).fetchall()
-        return [dict(r) for r in rows]
-
-
-def get_dow_completion():
-    """Returns [{dow, pct}] grouped by day-of-week (0=Sun)."""
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT strftime('%w', log_date) as dow,
-                   ROUND(100.0 * SUM(done) / COUNT(*), 1) as pct
-            FROM habit_log GROUP BY dow ORDER BY dow
-        """).fetchall()
+            SELECT log_date, value FROM habit_log
+            WHERE habit_id = ? AND log_date >= date('now', '-{days} days')
+            ORDER BY log_date
+        """, (habit_id,)).fetchall()
         return [dict(r) for r in rows]
 
 
