@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: habits_tracker_db
+    
+    # Environment variables
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password_123
+      POSTGRES_DB: habits_tracker
+      # Enable timezone support
+      TZ: UTC
+    
+    # Port mapping: [HOST_PORT:CONTAINER_PORT]
+    ports:
+      - "5432:5432"
+    
+    # Volume for persistent data
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    
+    # Restart policy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local

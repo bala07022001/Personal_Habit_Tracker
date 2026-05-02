@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Personal Habit & Reading Tracker — Streamlit App
 Expert-level journalling, habit tracking, and reading log in one place.
@@ -12,7 +13,8 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
-import database as db
+import database_postgres as db
+from database_postgres import get_conn
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -222,7 +224,8 @@ if page == "🏠 Dashboard":
 # PAGE: DAILY HABITS
 # ─────────────────────────────────────────────────────────────────────────────
 elif page == "✅ Daily Habits":
-    st.markdown("## ✅ Daily Actions")
+    st.markdown("## ✅ Log Your Actions")
+    st.markdown("*Extract ideas, apply learning, track progress*")
     
     sel_date = st.date_input("Date", value=date.today(), max_value=date.today())
     sel_date_str = str(sel_date)
@@ -236,7 +239,7 @@ elif page == "✅ Daily Habits":
     existing_map = {h["id"]: h for h in existing}
 
     st.markdown("---")
-    st.markdown(f"### 📋 Log for **{sel_date.strftime('%A, %B %d %Y')}**")
+    st.markdown(f"### 📋 {sel_date.strftime('%A, %B %d %Y')}")
     
     # Group by category
     categories = {}
@@ -246,125 +249,137 @@ elif page == "✅ Daily Habits":
     log_data = {}
     
     for cat, cat_habits in categories.items():
-        with st.expander(f"**🏷️ {cat}**", expanded=True):
+        with st.expander(f"**{cat}**", expanded=True):
             for h in cat_habits:
                 existing_h = existing_map.get(h["id"], {})
                 current_value = existing_h.get("value", 0)
                 
-                # Display habit with description
-                col_title, col_target = st.columns([3, 1])
-                with col_title:
-                    st.markdown(f"#### {h['name']}")
+                # Initialize session state for this habit's edit mode (use different key than button)
+                state_key = f"show_edit_target_{h['id']}"
+                if state_key not in st.session_state:
+                    st.session_state[state_key] = False
+                
+                # Header with editable target
+                col_name, col_target_edit = st.columns([3, 1])
+                with col_name:
+                    st.markdown(f"### {h['name']}")
                     if h['description']:
-                        st.caption(f"💬 {h['description']}")
+                        st.caption(f"*{h['description']}*")
                 
-                with col_target:
-                    if h['target_value']:
-                        st.metric("Target", f"{h['target_value']} {h['unit'] or ''}")
+                with col_target_edit:
+                    if st.button(f"✏️ Target", key=f"btn_edit_target_{h['id']}", help="Edit your target"):
+                        st.session_state[state_key] = True
+                        st.rerun()
+                    
+                    if st.session_state.get(state_key):
+                        new_target = st.number_input(
+                            f"New target ({h['unit'] or 'units'})",
+                            value=float(h['target_value'] or 0),
+                            step=0.5,
+                            key=f"inp_target_{h['id']}"
+                        )
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            if st.button("✅ Save", key=f"btn_save_target_{h['id']}"):
+                                db.update_habit(h['id'], target_value=new_target)
+                                st.session_state[state_key] = False
+                                st.rerun()
+                        with col_cancel:
+                            if st.button("❌ Cancel", key=f"btn_cancel_target_{h['id']}"):
+                                st.session_state[state_key] = False
+                                st.rerun()
                 
-                # Input based on action_type
-                col1, col2, col3 = st.columns([2, 2, 1])
+                # Input section
+                col_input, col_note = st.columns([2, 2])
                 
                 if h['action_type'] == 'checkbox':
-                    with col1:
+                    with col_input:
                         done = st.checkbox(
-                            "Completed",
+                            "✅ Done",
                             value=bool(current_value),
-                            key=f"done_{h['id']}_{sel_date_str}"
+                            key=f"done_{h['id']}"
                         )
                         log_data[h["id"]] = (1.0 if done else 0.0, "")
-                    with col2:
-                        st.empty()
-                    with col3:
-                        if current_value > 0:
-                            st.markdown("✅")
-                        else:
-                            st.markdown("⭕")
+                    with col_note:
+                        if done:
+                            st.markdown("✅ **Logged**")
                 
                 elif h['action_type'] == 'duration':
-                    with col1:
+                    with col_input:
                         hours = st.number_input(
-                            "Hours",
+                            f"Hours ({h['unit']})",
                             min_value=0.0,
                             max_value=24.0,
                             step=0.25,
                             value=float(current_value),
-                            key=f"hours_{h['id']}_{sel_date_str}"
+                            key=f"hours_{h['id']}"
                         )
-                    with col2:
+                        if h['target_value'] and hours > 0:
+                            pct = min(100, int((hours / h['target_value']) * 100))
+                            st.progress(min(pct/100, 1.0), text=f"{pct}% of target")
+                    
+                    with col_note:
                         note = st.text_input(
-                            "Note",
+                            "Project/What",
                             value=existing_h.get("note", ""),
-                            key=f"note_{h['id']}_{sel_date_str}",
-                            placeholder="What did you do?"
+                            key=f"note_{h['id']}",
+                            placeholder="e.g., Deep work on AI research"
                         )
-                    with col3:
-                        if hours > 0:
-                            pct = min(100, int((hours / (h['target_value'] or 1)) * 100))
-                            st.metric("Progress", f"{pct}%")
                     log_data[h["id"]] = (hours, note)
                 
                 elif h['action_type'] == 'pages':
-                    with col1:
+                    with col_input:
                         pages = st.number_input(
-                            "Pages read",
+                            "Pages captured",
                             min_value=0,
                             step=1,
                             value=int(current_value),
-                            key=f"pages_{h['id']}_{sel_date_str}"
+                            key=f"pages_{h['id']}"
                         )
-                    with col2:
+                        if h['target_value'] and pages > 0:
+                            pct = min(100, int((pages / h['target_value']) * 100))
+                            st.progress(min(pct/100, 1.0), text=f"{pct}% of target")
+                    
+                    with col_note:
                         book = st.text_input(
-                            "Book",
+                            "Book title",
                             value=existing_h.get("note", ""),
-                            key=f"book_{h['id']}_{sel_date_str}",
+                            key=f"book_{h['id']}",
                             placeholder="Which book?"
                         )
-                    with col3:
-                        if pages > 0:
-                            st.metric("Pages", pages)
                     log_data[h["id"]] = (float(pages), book)
                 
                 else:  # quantity
-                    with col1:
+                    with col_input:
                         qty = st.number_input(
-                            h['unit'] or "Quantity",
+                            h['unit'] or "Count",
                             min_value=0.0,
                             step=1.0,
                             value=float(current_value),
-                            key=f"qty_{h['id']}_{sel_date_str}"
+                            key=f"qty_{h['id']}"
                         )
-                    with col2:
-                        note = st.text_input(
-                            "Note",
-                            value=existing_h.get("note", ""),
-                            key=f"note_qty_{h['id']}_{sel_date_str}",
-                            placeholder="Details..."
-                        )
-                    with col3:
                         if h['target_value'] and qty > 0:
                             pct = min(100, int((qty / h['target_value']) * 100))
-                            st.metric("Progress", f"{pct}%")
+                            st.progress(min(pct/100, 1.0), text=f"{pct}% of target")
+                    
+                    with col_note:
+                        note = st.text_input(
+                            "Details",
+                            value=existing_h.get("note", ""),
+                            key=f"qty_note_{h['id']}",
+                            placeholder="What specifically?"
+                        )
                     log_data[h["id"]] = (qty, note)
                 
                 st.divider()
     
-    # Save button
-    col_save, col_summary = st.columns([1, 3])
-    with col_save:
-        if st.button("💾 Save Log", type="primary", use_container_width=True):
-            for habit_id, (value, note) in log_data.items():
+    if st.button("💾 Save Today's Actions", type="primary"):
+        for habit_id, (value, note) in log_data.items():
+            if value > 0 or note:
                 db.log_habit(habit_id, sel_date_str, value, note)
-            st.success("✅ Logged! Keep flowing...")
-            st.rerun()
-    
-    with col_summary:
-        completed = sum(1 for v, _ in log_data.values() if v > 0)
-        st.info(f"📊 {completed}/{len(habits)} actions logged today")
+        st.success("✅ Actions logged!")
+        st.rerun()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE: JOURNAL
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE: JOURNAL
@@ -432,125 +447,292 @@ elif page == "📓 Journal":
 # PAGE: READING STACK
 # ─────────────────────────────────────────────────────────────────────────────
 elif page == "📚 Reading Stack":
-    st.markdown("## 📚 Reading Stack")
+    st.markdown("## 📚 Your Reading & Ideas")
+    st.markdown("*Mine books for ideas. Extract. Apply. Progress.*")
 
-    tab1, tab2, tab3 = st.tabs(["📖 All Books", "➕ Add Book", "📝 Log Reading Session"])
+    tab_reading, tab_ideas, tab_capture = st.tabs(["📖 Currently Reading", "💡 Ideas Extracted", "✍️ Capture Idea"])
 
-    with tab1:
-        col1, col2, col3 = st.columns(3)
+    with tab_reading:
+        st.markdown("### 📖 Books in Progress")
+        in_progress = db.get_books("Inprogress")
+        
+        if in_progress:
+            for b in in_progress:
+                # Initialize session state using separate keys (not widget keys)
+                show_rating_edit = f"show_rating_edit_{b['id']}"
+                show_year_edit = f"show_year_edit_{b['id']}"
+                show_idea_form = f"show_idea_form_{b['id']}"
+                
+                if show_rating_edit not in st.session_state:
+                    st.session_state[show_rating_edit] = False
+                if show_year_edit not in st.session_state:
+                    st.session_state[show_year_edit] = False
+                if show_idea_form not in st.session_state:
+                    st.session_state[show_idea_form] = False
+                
+                with st.expander(f"**{b['title']}** — {b['author'] or 'Unknown'}", expanded=True):
+                    # Book metadata with inline editing
+                    st.markdown("---")
+                    col_meta1, col_meta2, col_meta3, col_meta4 = st.columns(4)
+                    
+                    with col_meta1:
+                        st.markdown(f"📚 **Discipline**")
+                        st.caption(b['discipline'] or "—")
+                    
+                    with col_meta2:
+                        st.markdown(f"⭐ **Rating**")
+                        if st.session_state.get(show_rating_edit):
+                            new_rating = st.slider("Rate this book", 0, 5, int(b['rating'] or 0), key=f"rating_slider_{b['id']}")
+                            col_sr1, col_sr2 = st.columns(2)
+                            with col_sr1:
+                                if st.button("✅ Save", key=f"btn_save_rating_{b['id']}", use_container_width=True):
+                                    db.update_book(b['id'], rating=new_rating if new_rating > 0 else None)
+                                    st.session_state[show_rating_edit] = False
+                                    st.rerun()
+                            with col_sr2:
+                                if st.button("❌ Cancel", key=f"btn_cancel_rating_{b['id']}", use_container_width=True):
+                                    st.session_state[show_rating_edit] = False
+                                    st.rerun()
+                        else:
+                            st.caption(rating_stars(b['rating']))
+                            if st.button("✏️ Edit", key=f"btn_edit_rating_{b['id']}", use_container_width=True):
+                                st.session_state[show_rating_edit] = True
+                                st.rerun()
+                    
+                    with col_meta3:
+                        st.markdown(f"📅 **Year Read**")
+                        if st.session_state.get(show_year_edit):
+                            new_year = st.text_input("Year", value=b['year_read'] or "", key=f"inp_year_{b['id']}")
+                            col_sy1, col_sy2 = st.columns(2)
+                            with col_sy1:
+                                if st.button("✅ Save", key=f"btn_save_year_{b['id']}", use_container_width=True):
+                                    db.update_book(b['id'], year_read=new_year)
+                                    st.session_state[show_year_edit] = False
+                                    st.rerun()
+                            with col_sy2:
+                                if st.button("❌ Cancel", key=f"btn_cancel_year_{b['id']}", use_container_width=True):
+                                    st.session_state[show_year_edit] = False
+                                    st.rerun()
+                        else:
+                            st.caption(b['year_read'] or "—")
+                            if st.button("✏️ Edit", key=f"btn_edit_year_{b['id']}", use_container_width=True):
+                                st.session_state[show_year_edit] = True
+                                st.rerun()
+                    
+                    with col_meta4:
+                        ideas_list = db.get_book_ideas(b['id'])
+                        st.markdown(f"💡 **Ideas**")
+                        st.caption(f"{len(ideas_list)} captured")
+                    
+                    st.markdown("---")
+                    
+                    # Current focus
+                    if b['activity']:
+                        st.info(f"**📍 Current Focus:** _{b['activity']}_")
+                    
+                    # Key lessons
+                    if b['key_lessons']:
+                        st.markdown("**🧠 Key Lessons:**")
+                        for lesson in b['key_lessons'].split("\n"):
+                            if lesson.strip():
+                                st.markdown(f"- {lesson.strip()}")
+                    
+                    # Favourite quote
+                    if b['favourite_quote']:
+                        st.success(f"💬 _{b['favourite_quote']}_")
+                    
+                    st.markdown("---")
+                    
+                    # Ideas from this book
+                    ideas_list = db.get_book_ideas(b['id'])
+                    if ideas_list:
+                        st.markdown("**📋 Ideas from this book:**")
+                        for idea in ideas_list:
+                            with st.expander(f"💡 {idea['title']}"):
+                                if idea['chapter_section']:
+                                    st.caption(f"📍 {idea['chapter_section']}")
+                                if idea['description']:
+                                    st.write(idea['description'])
+                                # Show applications
+                                apps = db.get_idea_applications(idea['id'])
+                                if apps:
+                                    st.markdown("**Applied to:**")
+                                    for app in apps:
+                                        st.markdown(f"- {app['project_name']}")
+                    
+                    st.markdown("---")
+                    
+                    # Idea capture form (enhanced)
+                    if st.session_state.get(show_idea_form):
+                        st.markdown("### ✍️ Capture a New Idea")
+                        with st.form(f"frm_idea_{b['id']}"):
+                            idea_title = st.text_input("🎯 What's the core idea?", placeholder="Concise idea title", key=f"idea_title_{b['id']}")
+                            idea_desc = st.text_area("📝 Why does this matter to you?", height=100, placeholder="How will you use this? What problem does it solve?", key=f"idea_desc_{b['id']}")
+                            idea_chapter = st.text_input("📍 Chapter/Section/Page", placeholder="e.g., Chapter 3, pp. 45-52", key=f"idea_chapter_{b['id']}")
+                            idea_project = st.text_input("🚀 Which project/work could this impact?", placeholder="Optional: where will you apply this?", key=f"idea_project_{b['id']}")
+                            
+                            col_submit, col_cancel = st.columns(2)
+                            with col_submit:
+                                if st.form_submit_button("✅ Save Idea", use_container_width=True):
+                                    if idea_title.strip():
+                                        db.capture_idea(b['id'], None, idea_title, idea_desc, idea_chapter)
+                                        st.success("💡 Idea captured!")
+                                        st.session_state[show_idea_form] = False
+                                        st.rerun()
+                                    else:
+                                        st.error("Idea title required")
+                            with col_cancel:
+                                if st.form_submit_button("❌ Cancel", use_container_width=True):
+                                    st.session_state[show_idea_form] = False
+                                    st.rerun()
+                    else:
+                        if st.button("➕ Capture New Idea", key=f"btn_idea_form_{b['id']}", use_container_width=True):
+                            st.session_state[show_idea_form] = True
+                            st.rerun()
+                    
+                    st.markdown("---")
+                    
+                    # Action buttons
+                    col_edit, col_activity, col_done = st.columns(3)
+                    with col_edit:
+                        if st.button("✏️ Full Edit", key=f"edit_full_{b['id']}", use_container_width=True):
+                            st.session_state["edit_book_id"] = b["id"]
+                            st.session_state["page_override"] = "📖 Book Detail"
+                            st.rerun()
+                    with col_activity:
+                        new_activity = st.text_input("Current chapter/section", value=b['activity'] or "", key=f"activity_{b['id']}", label_visibility="collapsed")
+                        if new_activity != (b['activity'] or ""):
+                            db.update_book(b['id'], activity=new_activity)
+                            st.rerun()
+                    with col_done:
+                        if st.button("✅ Mark Complete", key=f"done_{b['id']}", use_container_width=True):
+                            db.update_book(b['id'], status="Completed")
+                            st.success("📚 Book marked complete!")
+                            st.rerun()
+        else:
+            st.info("No books in progress. Add one from the Reading Stack!")
+        
+        st.markdown("---")
+        st.markdown("### 📚 All Books")
+        col1, col2 = st.columns(2)
         with col1:
-            status_filter = st.selectbox("Status", ["All", "Completed", "Inprogress", "On Hold", "Yet To Start"])
+            status_filter = st.selectbox("Filter by status", ["All", "Completed", "On Hold", "Yet To Start"])
         with col2:
-            search_q = st.text_input("🔍 Search", placeholder="title, author, discipline...")
-        with col3:
-            sort_by = st.selectbox("Sort", ["id", "title", "author", "discipline", "completion_date"])
-
+            search_q = st.text_input("Search books", placeholder="title, author...")
+        
         if search_q:
             books = db.search_books(search_q)
         elif status_filter == "All":
             books = db.get_books()
         else:
             books = db.get_books(status_filter)
-
-        books = sorted(books, key=lambda x: (x.get(sort_by) or "") if sort_by != "id" else x["id"])
-
-        st.markdown(f"**{len(books)} books**")
-        st.markdown("---")
-
+        
         for b in books:
             status_icon = {"Completed": "✅", "Inprogress": "📖", "On Hold": "⏸️", "Yet To Start": "🔲"}.get(b["status"], "")
-            with st.expander(f"{status_icon} **{b['title']}** — _{b['author'] or 'Unknown'}_  {rating_stars(b['rating'])}"):
+            with st.expander(f"{status_icon} {b['title']} — {b['author'] or 'Unknown'} {rating_stars(b['rating'])}"):
                 c1, c2, c3 = st.columns(3)
-                c1.markdown(f"**Discipline:** {b['discipline'] or '—'}")
-                c2.markdown(f"**Status:** :{status_color(b['status'])}[{b['status']}]")
+                c1.markdown(f"**Discipline:** {b['discipline']}")
+                c2.markdown(f"**Status:** {b['status']}")
                 c3.markdown(f"**Year:** {b['year_read'] or '—'}")
-                if b["activity"]:
-                    st.markdown(f"**Activity/Chapter:** {b['activity']}")
-                if b["key_lessons"]:
-                    st.markdown("**🧠 Key Lessons:**")
-                    for lesson in b["key_lessons"].split("\n"):
-                        if lesson.strip():
-                            st.markdown(f"- {lesson.strip()}")
-                if b["favourite_quote"]:
-                    st.markdown(f"> _{b['favourite_quote']}_")
-                if b["review"]:
-                    st.markdown("**📝 Review:**")
-                    st.markdown(b["review"])
-                if b["tags"]:
-                    st.markdown(f"**🏷️ Tags:** {b['tags']}")
-
-                btn_col1, btn_col2 = st.columns([1, 1])
-                with btn_col1:
-                    if st.button("✏️ Edit", key=f"edit_{b['id']}"):
+                
+                col_edit_all, col_status_all = st.columns(2)
+                with col_edit_all:
+                    if st.button("✏️ Edit", key=f"edit_detail_{b['id']}", use_container_width=True):
                         st.session_state["edit_book_id"] = b["id"]
                         st.session_state["page_override"] = "📖 Book Detail"
                         st.rerun()
-                with btn_col2:
-                    if st.button("🗑️ Delete", key=f"del_{b['id']}", type="secondary"):
-                        st.session_state[f"confirm_del_{b['id']}"] = True
+                with col_status_all:
+                    new_status_all = st.selectbox("Change status", ["Yet To Start", "Inprogress", "On Hold", "Completed"], 
+                                                  index=["Yet To Start", "Inprogress", "On Hold", "Completed"].index(b["status"]),
+                                                  key=f"status_{b['id']}",
+                                                  label_visibility="collapsed")
+                    if new_status_all != b["status"]:
+                        db.update_book(b['id'], status=new_status_all)
                         st.rerun()
 
-                if st.session_state.get(f"confirm_del_{b['id']}"):
-                    st.warning(f"Are you sure you want to delete **{b['title']}**?")
-                    yes_col, no_col = st.columns(2)
-                    with yes_col:
-                        if st.button("✅ Yes, delete", key=f"yes_del_{b['id']}"):
-                            db.delete_book(b["id"])
-                            st.session_state.pop(f"confirm_del_{b['id']}", None)
-                            st.success("Deleted.")
-                            st.rerun()
-                    with no_col:
-                        if st.button("❌ Cancel", key=f"no_del_{b['id']}"):
-                            st.session_state.pop(f"confirm_del_{b['id']}", None)
-                            st.rerun()
-
-    with tab2:
-        st.markdown("### ➕ Add New Book")
-        with st.form("add_book_form"):
-            t1, t2 = st.columns(2)
-            title = t1.text_input("Title *")
-            author = t2.text_input("Author")
-            d1, d2 = st.columns(2)
-            discipline = d1.text_input("Discipline")
-            status = d2.selectbox("Status", ["Yet To Start", "Inprogress", "Completed", "On Hold"])
-            y1, y2 = st.columns(2)
-            year_read = y1.text_input("Year Read")
-            activity = y2.text_input("Current Chapter / Activity")
-            rating = st.slider("Rating", 0, 5, 0)
-            tags = st.text_input("Tags (comma separated)")
-            key_lessons = st.text_area("Key Lessons (one per line)")
-            favourite_quote = st.text_area("Favourite Quote", height=80)
-            review = st.text_area("Review / Thoughts", height=120)
-            submitted = st.form_submit_button("Add Book", type="primary")
-            if submitted:
-                if not title.strip():
-                    st.error("Title is required.")
-                else:
-                    db.add_book(
-                        title=title.strip(), author=author, discipline=discipline,
-                        status=status, year_read=year_read, activity=activity,
-                        rating=rating if rating > 0 else None,
-                        review=review, key_lessons=key_lessons,
-                        favourite_quote=favourite_quote, tags=tags
-                    )
-                    st.success(f"'{title}' added!")
-                    st.rerun()
-
-    with tab3:
-        st.markdown("### 📝 Log a Reading Session")
-        books_list = db.get_books()
-        if books_list:
-            book_options = {f"[{b['id']}] {b['title']}": b["id"] for b in books_list}
-            chosen = st.selectbox("Book", list(book_options.keys()))
-            book_id = book_options[chosen]
-            log_date = st.date_input("Date", value=date.today(), max_value=date.today(), key="rl_date")
-            pages = st.number_input("Pages Read", min_value=0, value=0)
-            notes = st.text_area("Session Notes", height=100)
-            if st.button("💾 Log Session", type="primary"):
-                db.log_reading_session(book_id, str(log_date), pages, notes)
-                st.success("Reading session logged!")
+    with tab_ideas:
+        st.markdown("### 💡 Your Extracted Ideas")
+        
+        # Get all ideas
+        with get_conn() as conn:
+            all_ideas = conn.execute("""
+                SELECT i.*, b.title as book_title
+                FROM ideas i
+                LEFT JOIN books b ON i.book_id = b.id
+                ORDER BY i.captured_date DESC
+            """).fetchall()
+            ideas_list = [dict(r) for r in all_ideas]
+        
+        if ideas_list:
+            status_filter = st.selectbox("Show", ["All", "Captured", "Applied"])
+            
+            for idea in ideas_list:
+                if status_filter != "All" and idea['status'] != status_filter.lower():
+                    continue
+                
+                badge = "💡" if idea['status'] == 'captured' else "✅"
+                with st.expander(f"{badge} **{idea['title']}**"):
+                    if idea['book_title']:
+                        st.markdown(f"📖 From: _{idea['book_title']}_")
+                    if idea['chapter_section']:
+                        st.markdown(f"📍 {idea['chapter_section']}")
+                    if idea['description']:
+                        st.markdown(f"**Idea:** {idea['description']}")
+                    
+                    # Show applications
+                    apps = db.get_idea_applications(idea['id'])
+                    if apps:
+                        st.markdown("**Applied to:**")
+                        for app in apps:
+                            st.markdown(f"- **{app['project_name']}** ({app['application_date']}) — {app['description']}")
+                    
+                    # Add application
+                    with st.form(f"app_form_{idea['id']}"):
+                        st.markdown("**Apply this idea to a project:**")
+                        project = st.text_input("Project/Work name")
+                        app_desc = st.text_area("How are you using this?", height=80)
+                        impact = st.text_input("Expected impact")
+                        if st.form_submit_button("🔗 Link Application"):
+                            if project.strip():
+                                db.apply_idea(idea['id'], project, app_desc, impact)
+                                st.success("✅ Application logged!")
+                                st.rerun()
         else:
-            st.info("Add books first.")
+            st.info("No ideas captured yet. Go to 📖 Currently Reading or use ✍️ Capture Idea tab.")
+
+    with tab_capture:
+        st.markdown("### ✍️ Capture a New Idea")
+        st.markdown("*Extract learnings without needing to finish the book*")
+        
+        with st.form("capture_idea_form"):
+            idea_type = st.radio("Where is this idea from?", ["From a book", "From a habit", "General learning"])
+            
+            idea_title = st.text_input("What's the core idea?")
+            idea_desc = st.text_area("Describe it (why it matters to you)", height=100)
+            
+            if idea_type == "From a book":
+                books_list = db.get_books()
+                if books_list:
+                    book = st.selectbox("Which book?", options=[b['id'] for b in books_list],
+                                       format_func=lambda bid: next((b['title'] for b in books_list if b['id'] == bid), "Unknown"))
+                    chapter = st.text_input("Chapter/Section/Page")
+                    book_id = book
+                else:
+                    st.warning("Add a book first!")
+                    book_id = None
+                    chapter = ""
+            else:
+                book_id = None
+                chapter = ""
+            
+            if st.form_submit_button("💡 Save Idea", type="primary"):
+                if idea_title.strip():
+                    db.capture_idea(book_id, None, idea_title, idea_desc, chapter if idea_type == "From a book" else "")
+                    st.success("✅ Idea captured! You can now apply it to your projects.")
+                    st.rerun()
+                else:
+                    st.error("Idea title is required.")
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -660,11 +842,11 @@ elif page == "📊 Analytics":
                 with cols[i % len(cols)]:
                     if h["action_type"] == "checkbox":
                         val = f"{h['days_logged']}/30"
-                        label = "Days"
+                        unit = "Days"
                     else:
                         val = f"{h['total_value']:.1f}" if h['total_value'] else "0"
-                        label = h['unit'] or "Total"
-                    st.metric(h['name'][:12], val, label=label)
+                        unit = h['unit'] or "Total"
+                    st.metric(h['name'][:12], val, help=unit)
             
             st.divider()
             

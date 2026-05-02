@@ -83,6 +83,25 @@ def init_db():
             notes           TEXT,
             UNIQUE(book_id, log_date)
         );
+        CREATE TABLE IF NOT EXISTS ideas (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            book_id         INTEGER REFERENCES books(id),
+            habit_id        INTEGER REFERENCES habits(id),
+            title           TEXT NOT NULL,
+            description     TEXT,
+            chapter_section TEXT,
+            status          TEXT DEFAULT 'captured',
+            captured_date   DATE DEFAULT (date('now')),
+            applied_date    DATE
+        );
+        CREATE TABLE IF NOT EXISTS applications (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            idea_id         INTEGER NOT NULL REFERENCES ideas(id),
+            project_name    TEXT NOT NULL,
+            description     TEXT,
+            application_date DATE DEFAULT (date('now')),
+            impact          TEXT
+        );
         """)
 
 
@@ -120,13 +139,61 @@ def get_habit(habit_id: int):
 
 
 def update_habit(habit_id: int, **fields):
-    """Update habit fields."""
+    """Update habit fields (e.g., name, description, target_value)."""
     if not fields:
         return
     sets = ", ".join(f"{k}=?" for k in fields)
     vals = list(fields.values()) + [habit_id]
     with get_conn() as conn:
         conn.execute(f"UPDATE habits SET {sets} WHERE id=?", vals)
+
+
+def capture_idea(book_id: int = None, habit_id: int = None, title: str = "", 
+                description: str = "", chapter_section: str = ""):
+    """Capture a key learning/idea from a book or habit."""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO ideas(book_id, habit_id, title, description, chapter_section)
+            VALUES(?, ?, ?, ?, ?)
+        """, (book_id, habit_id, title, description, chapter_section))
+        return conn.lastrowid
+
+
+def apply_idea(idea_id: int, project_name: str, description: str = "", impact: str = ""):
+    """Log application of an idea to a project."""
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO applications(idea_id, project_name, description, impact)
+            VALUES(?, ?, ?, ?)
+        """, (idea_id, project_name, description, impact))
+        conn.execute(
+            "UPDATE ideas SET status='applied', applied_date=date('now') WHERE id=?",
+            (idea_id,)
+        )
+
+
+def get_book_ideas(book_id: int):
+    """Get all ideas captured from a book."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT i.*, COUNT(a.id) as applications_count
+            FROM ideas i
+            LEFT JOIN applications a ON i.id = a.idea_id
+            WHERE i.book_id = ?
+            GROUP BY i.id
+            ORDER BY i.captured_date DESC
+        """, (book_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_idea_applications(idea_id: int):
+    """Get all projects where an idea has been applied."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT * FROM applications WHERE idea_id = ?
+            ORDER BY application_date DESC
+        """, (idea_id,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def complete_habit(habit_id: int):
@@ -246,6 +313,32 @@ def get_habit_timeline(habit_id: int, days: int = 60):
             WHERE habit_id = ? AND log_date >= date('now', '-{days} days')
             ORDER BY log_date
         """, (habit_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_daily_completion_trend(days: int = 60):
+    """Get daily habit completion % over N days."""
+    with get_conn() as conn:
+        rows = conn.execute(f"""
+            SELECT
+                d.log_date,
+                ROUND(100.0 * COUNT(DISTINCT hl.habit_id) / NULLIF(COUNT(DISTINCT h.id), 0), 1) as pct
+            FROM (
+                WITH RECURSIVE dates(log_date) AS (
+                    SELECT date('now')
+                    UNION ALL
+                    SELECT date(log_date, '-1 day')
+                    FROM dates
+                    WHERE log_date > date('now', '-{days} days')
+                )
+                SELECT log_date FROM dates
+            ) d
+            CROSS JOIN habits h
+            LEFT JOIN habit_log hl ON h.id = hl.habit_id AND hl.log_date = d.log_date
+            WHERE h.status = 'active'
+            GROUP BY d.log_date
+            ORDER BY d.log_date DESC
+        """).fetchall()
         return [dict(r) for r in rows]
 
 

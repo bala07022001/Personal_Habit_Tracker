@@ -4,7 +4,7 @@ Run once: python seed_data.py
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
-import database as db
+import database_postgres as db
 
 db.init_db()
 

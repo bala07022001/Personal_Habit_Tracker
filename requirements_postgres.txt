@@ -1,0 +1,11 @@
+# PostgreSQL-specific requirements
+# Add these to your existing requirements.txt
+
+# PostgreSQL adapter for Python
+psycopg2-binary==2.9.9
+
+# Alternative: psycopg2 (requires compilation, but more stable)
+# psycopg2==2.9.9
+
+# Connection pooling utilities (optional, but recommended)
+# sqlalchemy==2.0.23  # If you want to use ORM instead of raw SQL
