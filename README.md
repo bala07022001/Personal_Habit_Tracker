@@ -1,6 +1,6 @@
 # Personal Habit & Reading Tracker
 
-A full-featured personal tracker app built with Streamlit + SQLite (local) / PostgreSQL (cloud).
+A full-featured personal tracker app built with Streamlit + local SQLite database.
 
 ## Features
 - **Daily Habit Tracking** — Log 13 custom habits, see streaks, 7-day overview grid
@@ -8,6 +8,7 @@ A full-featured personal tracker app built with Streamlit + SQLite (local) / Pos
 - **Reading Stack** — 100+ books with status, review, key lessons, quotes, ratings
 - **Book Detail** — Edit review/notes per book, log reading sessions
 - **Analytics** — Habit heatmap, completion % over time, books by discipline/year
+- **🔍 SQL Query Editor** — Direct database access to CREATE, READ, UPDATE, DELETE data
 - **Dark theme** with clean card UI
 
 ---
@@ -25,57 +26,86 @@ python seed_data.py
 streamlit run app.py
 ```
 
----
+Your app will open at `http://localhost:8501`
 
-## Deploy to Streamlit Community Cloud (free, mobile-accessible)
-
-> GitHub Pages only serves static sites — for a Python/Streamlit app use **Streamlit Community Cloud**.
-
-### Step 1 — Free Supabase database
-1. Go to [supabase.com](https://supabase.com) → **New project**
-2. After creation: **Project Settings → Database → Connection string → URI**
-3. Copy the URI (it looks like `postgresql://postgres.[ref]:[password]@...`)
-
-### Step 2 — Push to GitHub
-```bash
-# Inside tracker_app/
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<repo-name>.git
-git push -u origin main
-```
-
-### Step 3 — Deploy on Streamlit Community Cloud
-1. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**
-2. Connect your GitHub repo, set **Main file** = `app.py`
-3. In **Advanced settings → Secrets**, paste:
-   ```toml
-   DATABASE_URL = "postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres"
-   ```
-4. Click **Deploy** — your app will be live at a public URL you can bookmark on mobile
-
-### Step 4 — Seed cloud database (once)
-After first deploy, in the Streamlit Cloud terminal (or locally with `DATABASE_URL` set):
-```bash
-DATABASE_URL="your-url-here" python seed_data.py
-```
+**Database location:** `tracker_app/tracker.db` (SQLite file on your computer)
 
 ---
 
-## Structure
+## Using the Query Editor
+
+Go to **🔍 Query Editor** to run custom SQL directly:
+
+**View all habits:**
+```sql
+SELECT * FROM habits WHERE is_active = 1;
+```
+
+**Get today's habit log:**
+```sql
+SELECT h.name, COALESCE(hl.done, 0) as done
+FROM habits h
+LEFT JOIN habit_log hl ON h.id = hl.habit_id AND hl.log_date = date('now')
+WHERE h.is_active = 1;
+```
+
+**Find all completed books:**
+```sql
+SELECT * FROM books WHERE status = 'Completed';
+```
+
+**Add a new habit (INSERT):**
+```sql
+INSERT INTO habits (name, category) VALUES ('Meditation', 'Wellness');
+```
+
+**Update book status (UPDATE):**
+```sql
+UPDATE books SET status = 'Completed' WHERE title = 'Atomic Habits';
+```
+
+**Delete old entries (DELETE):**
+```sql
+DELETE FROM habit_log WHERE log_date < date('now', '-1 year');
+```
+
+---
+
+## Database Structure
+
+| Table | Purpose |
+|-------|---------|
+| `habits` | Your habit definitions + active status |
+| `habit_log` | Daily logs (done/missed + notes) |
+| `journal` | Daily journal entries with mood |
+| `books` | Your book library |
+| `reading_log` | Reading sessions (pages read + notes) |
+
+---
+
+## Project Structure
+
 ```
 tracker_app/
 ├── app.py                        # Main Streamlit application
-├── database.py                   # SQLite (local) / PostgreSQL (cloud) layer
+├── database.py                   # SQLite persistence + Query Editor API
 ├── seed_data.py                  # One-time data seeder (habits + books)
 ├── requirements.txt
 ├── .gitignore
+├── README.md
 ├── .streamlit/
 │   ├── config.toml               # Theme + server settings
-│   ├── secrets.toml              # Your DB URL — NOT committed (gitignored)
-│   └── secrets.toml.example      # Template to copy from
-└── tracker.db                    # Auto-created local SQLite DB (gitignored)
+│   └── secrets.toml              # Empty (local mode)
+└── tracker.db                    # SQLite database (auto-created, your data)
 ```
+
+---
+
+## Customization
+
+- **Edit dark theme:** Modify colors in `.streamlit/config.toml`
+- **Add more habits:** Use Query Editor or Settings → Add Habit
+- **Backup data:** Copy `tracker.db` to another folder
+- **Export data:** Use Query Editor to SELECT data and download as CSV
+
 

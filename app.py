@@ -89,7 +89,7 @@ def dark_layout(fig, height=320):
 # SIDEBAR — respects page_override set by Edit buttons
 # ─────────────────────────────────────────────────────────────────────────────
 PAGES = ["🏠 Dashboard", "✅ Daily Habits", "📓 Journal",
-         "📚 Reading Stack", "📖 Book Detail", "📊 Analytics", "⚙️ Settings"]
+         "📚 Reading Stack", "📖 Book Detail", "📊 Analytics", "🔍 Query Editor", "⚙️ Settings"]
 
 default_idx = 0
 if "page_override" in st.session_state:
@@ -844,6 +844,102 @@ elif page == "📊 Analytics":
             f"<table class='htable'><thead><tr>{head_dt}</tr></thead><tbody>{rows_dt}</tbody></table>",
             unsafe_allow_html=True
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE: QUERY EDITOR
+# ─────────────────────────────────────────────────────────────────────────────
+elif page == "🔍 Query Editor":
+    st.markdown("## 🔍 SQL Query Editor")
+    st.markdown("Run custom SQL queries to manage your data directly.")
+    
+    tab_query, tab_schema = st.tabs(["Execute Query", "Schema"])
+    
+    with tab_query:
+        st.markdown("### Write & Execute SQL")
+        sql_input = st.text_area(
+            "SQL Query",
+            placeholder="SELECT * FROM habits;\nINSERT INTO habits (name, category) VALUES ('New Habit', 'General');\nUPDATE books SET status='Completed' WHERE id=5;",
+            height=200,
+            label_visibility="collapsed"
+        )
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            execute_btn = st.button("▶️ Execute", type="primary")
+        with col2:
+            st.markdown("*Supports: SELECT, INSERT, UPDATE, DELETE*")
+        
+        if execute_btn and sql_input.strip():
+            result = db.execute_query(sql_input)
+            
+            if result["success"]:
+                st.success(f"✅ Query executed successfully ({result['count']} rows)")
+                
+                if result["data"]:
+                    st.markdown("### Results")
+                    df = pd.DataFrame(result["data"])
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Download as CSV
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download as CSV",
+                        data=csv,
+                        file_name="query_results.csv",
+                        mime="text/csv"
+                    )
+            else:
+                st.error(f"❌ Error: {result['error']}")
+        
+        st.markdown("---")
+        st.markdown("### 📖 Quick References")
+        with st.expander("View all tables", expanded=False):
+            st.markdown("""
+**Tables in your database:**
+- `habits` — Your daily habits
+- `habit_log` — Daily logs for each habit
+- `journal` — Daily journal entries
+- `books` — Your book library
+- `reading_log` — Reading sessions logged per book
+
+**Example queries:**
+```sql
+-- Get all active habits
+SELECT * FROM habits WHERE is_active = 1;
+
+-- Get habit completion for today
+SELECT h.name, COALESCE(hl.done, 0) as done
+FROM habits h
+LEFT JOIN habit_log hl ON h.id = hl.habit_id AND hl.log_date = date('now')
+WHERE h.is_active = 1;
+
+-- Get books completed this year
+SELECT * FROM books WHERE status = 'Completed' AND year_read LIKE '%2026%';
+
+-- Count entries by mood
+SELECT mood, COUNT(*) as count FROM journal GROUP BY mood;
+
+-- Update a habit name
+UPDATE habits SET name = 'New Name' WHERE id = 1;
+
+-- Delete a book
+DELETE FROM books WHERE id = 5;
+```
+            """)
+    
+    with tab_schema:
+        st.markdown("### Database Schema")
+        schema = db.get_table_schema()
+        
+        for table, columns in schema.items():
+            with st.expander(f"📋 {table} ({len(columns)} columns)", expanded=False):
+                df_schema = pd.DataFrame(columns)
+                st.dataframe(
+                    df_schema[["name", "type", "notnull", "pk"]],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
